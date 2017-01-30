@@ -3,6 +3,7 @@
 import rospy, time, math
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist, Vector3
+from neato_node.msg import Bump
 
 
 # Utility direction definitions
@@ -19,19 +20,19 @@ DIRECTIONS = {
 # Wall following configuration
 INSTRUCTIONS = {
 	# Robot is:
-	'atRange': {
+	'inRange': {
 		# and the wall is to the robot's:
 		'leftFront': DIRECTIONS["FORWARD_RIGHT"],
 		'rightFront': DIRECTIONS["FORWARD_LEFT"],
-		'leftBack': DIRECTIONS["FORWARD_RIGHT"],
-		'rightBack': DIRECTIONS["FORWARD_LEFT"]
+		'leftBack': DIRECTIONS["FORWARD_LEFT"],
+		'rightBack': DIRECTIONS["FORWARD_RIGHT"]
 	},
 	'tooClose': {
 		# and the wall is to the robot's
 		'leftFront': DIRECTIONS["RIGHT"],
 		'rightFront': DIRECTIONS["LEFT"],
-		'leftBack': DIRECTIONS["FORWARD"],
-		'rightBack': DIRECTIONS["FORWARD"]
+		'leftBack': DIRECTIONS["FORWARD_LEFT"],
+		'rightBack': DIRECTIONS["FORWARD_RIGHT"]
 	},
 	'tooFar': {
 		# and the wall is to the robot's
@@ -43,19 +44,31 @@ INSTRUCTIONS = {
 }
 
 class WallFollower(object):
-	def __init__(self):
+	def __init__(self, debug=False):
 		rospy.init_node('wall_follower')
 		rospy.Subscriber('/stable_scan', LaserScan, self.processScan)
+		rospy.Subscriber('/bump', Bump, self.emergencyStop)
 		self.publisher = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
 
 		self.minRange = None
 		self.lastMinRange = None
 		self.instruction = DIRECTIONS["FORWARD"]
+		self.stop = False
+		self.debug = debug
 
-		r = rospy.Rate(10)
+		r = rospy.Rate(40)
 		while not rospy.is_shutdown():
-			self.publisher.publish(self.instruction)
+			if self.stop:
+				self.publisher.publish(DIRECTIONS["STOP"])
+			else:
+				self.publisher.publish(self.instruction)
 			r.sleep()
+
+	def emergencyStop(self, b):
+		bumpList = [b.leftFront, b.leftSide, b.rightFront, b.rightSide]
+		for reading in bumpList:
+			if reading:
+				self.stop = True
 
 	def processScan(self, scan):
 		"""
@@ -90,24 +103,27 @@ class WallFollower(object):
 			return
 
 		# Find velocity away from wall
-		self.velocity =
-			(self.minRange["range"] - self.lastMinRange["range"])/
-			(self.minRange["time"] - self.lastMinRange["time"])
+		deltaRange = self.minRange["range"] - self.lastMinRange["range"]
+		deltaTime = self.minRange["time"] - self.lastMinRange["time"]
+		self.velocity = deltaRange / deltaTime
 
 		self.controller(self.minRange, self.velocity)
 
-	def controller(self, wallRange, wallVelocity, targetDistance = 0.4, errorRange=0.1):
+	def controller(self, wallRange, wallVelocity, targetDistance = 0.70, errorRange=0.10):
 		"""
 		Based on the data distilled from the scan, decide on the robot's
 		next course of action. Save it to an instruction variable for the
 		main loop to act on.
 		"""
-
-		position = 'inRange'
 		if wallRange["range"] >= targetDistance + errorRange:
 			position = 'tooFar'
 		elif wallRange["range"] <= targetDistance - errorRange:
 			position = 'tooClose'
+		else:
+			position = 'inRange'
+
+		if self.debug:
+			print position + " " + str(wallRange)
 
 		if wallRange['angle'] <= 90:
 			wallQuadrant = 'leftFront'
@@ -121,4 +137,4 @@ class WallFollower(object):
 		self.instruction = INSTRUCTIONS[position][wallQuadrant]
 
 if __name__ == "__main__":
-	w = WallFollower()
+	w = WallFollower(True)
