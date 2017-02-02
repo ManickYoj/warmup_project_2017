@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 
-import rospy, time, math
+import rospy, time, math, utils
 from sensor_msgs.msg import LaserScan
-from geometry_msgs.msg import Twist, Vector3
+from geometry_msgs.msg import Twist, Vector3, Point
 from neato_node.msg import Bump
+from nav_msgs.msg import Odometry
 
 
 # Utility direction definitions
@@ -48,20 +49,25 @@ class WallFollower(object):
 		rospy.init_node('wall_follower')
 		rospy.Subscriber('/stable_scan', LaserScan, self.processScan)
 		rospy.Subscriber('/bump', Bump, self.emergencyStop)
-		self.publisher = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+		rospy.Subscriber('/odom', Odometry, self.markObst)
+		self.cmd = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+		self.obst = rospy.Publisher('/obst/nearest', Point, queue_size=10)
 
 		self.minRange = None
 		self.lastMinRange = None
 		self.instruction = DIRECTIONS["FORWARD"]
+		self.nearestObst = None
 		self.stop = False
 		self.debug = debug
 
 		r = rospy.Rate(40)
 		while not rospy.is_shutdown():
 			if self.stop:
-				self.publisher.publish(DIRECTIONS["STOP"])
+				self.cmd.publish(DIRECTIONS["STOP"])
 			else:
-				self.publisher.publish(self.instruction)
+				self.cmd.publish(self.instruction)
+				if self.nearestObst:
+					self.obst.publish(self.nearestObst)
 			r.sleep()
 
 	def emergencyStop(self, b):
@@ -109,7 +115,19 @@ class WallFollower(object):
 
 		self.controller(self.minRange, self.velocity)
 
-	def controller(self, wallRange, wallVelocity, targetDistance = 0.70, errorRange=0.10):
+	def markObst(self, odom):
+		if not self.minRange:
+			return
+
+		robot_x, robot_y, _ = utils.poseToXYTheta(odom.pose.pose)
+
+		rangeAngle = math.radians(self.minRange["angle"])
+		rel_x = self.minRange["range"] * math.cos(rangeAngle)
+		rel_y = self.minRange["range"] * math.sin(rangeAngle)
+
+		self.nearestObst = Point(robot_x + rel_x, robot_y + rel_y, 0)
+
+	def controller(self, wallRange, wallVelocity, targetDistance = 0.80, errorRange=0.10):
 		"""
 		Based on the data distilled from the scan, decide on the robot's
 		next course of action. Save it to an instruction variable for the
@@ -137,4 +155,4 @@ class WallFollower(object):
 		self.instruction = INSTRUCTIONS[position][wallQuadrant]
 
 if __name__ == "__main__":
-	w = WallFollower(True)
+	w = WallFollower(False)
