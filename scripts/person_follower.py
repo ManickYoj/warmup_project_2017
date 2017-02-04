@@ -11,6 +11,7 @@ class PersonFollower(object):
         rospy.Subscriber('/stable_scan', LaserScan, self.processScan)
         rospy.Subscriber('/bump', Bump, self.emergencyStop)
         self.publisher = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+        self.prevCentroids = None
         r = rospy.Rate(40)
         self.debug = debug
         while not rospy.is_shutdown():
@@ -18,8 +19,6 @@ class PersonFollower(object):
 
     def processScan(self, scan):
         frontScan = scan.ranges[-45:-1] + scan.ranges[0:46]
-        print len(frontScan)
-        return
         blobs = []
         r = []
         for i in range(0,90):
@@ -31,12 +30,10 @@ class PersonFollower(object):
                 x = math.cos(angle)*frontScan[i]
                 y = math.sin(angle)*frontScan[i]
                 r.append((x,y))
-            else:
+            elif r != []:
                 blobs.append(r)
                 r = []
-        if self.debug:
-            print blobs
-
+        self.calCentroid(blobs)
 
     def emergencyStop(self, b):
         bumpList = [b.leftFront, b.leftSide, b.rightFront, b.rightSide]
@@ -44,6 +41,23 @@ class PersonFollower(object):
             if reading:
                 self.stop = True
 
+    def calCentroid(self, blobs):
+        centroids = []
+        for blob in blobs:
+            x = 0
+            y = 0
+            for point in blob:
+                x += point[0]
+                y += point[1]
+            centroids.append(((x/len(blob)), (y/len(blob))))    
+
+        if self.prevCentroids == None:
+            self.prevCentroids = centroids
+            return
+
+        if self.debug:
+            print centroids
+            print '-------------------------------------------------------------------'
 
 if __name__ == "__main__":
     test = PersonFollower()
