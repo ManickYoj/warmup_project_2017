@@ -14,7 +14,22 @@ class PersonFollower(object):
         self.prevCentroids = None
         r = rospy.Rate(40)
         self.debug = debug
+        #inital instruction
+        self.instruction = Twist(
+            linear=Vector3(0, 0, 0),
+            angular=Vector3(0, 0, 0)
+          )
+        self.stop = False
         while not rospy.is_shutdown():
+            if self.stop:
+                self.publisher.publish(
+                  Twist(
+                    linear=Vector3(0, 0, 0),
+                    angular=Vector3(0, 0, 0)
+                  )
+                )
+            else:
+                self.publisher.publish(self.instruction)
             r.sleep()
 
     def processScan(self, scan):
@@ -22,7 +37,7 @@ class PersonFollower(object):
         blobs = []
         r = []
         for i in range(0,90):
-            if frontScan[i] > 0.0 and frontScan[i] < 3.0:       
+            if frontScan[i] > 0.0 and frontScan[i] < 1.5:       
                 angle = i
                 if i < 45:
                     angle = 360 - i 
@@ -31,7 +46,10 @@ class PersonFollower(object):
                 y = math.sin(angle)*frontScan[i]
                 r.append((x,y))
             elif r != []:
-                blobs.append(r)
+                if (len(r) > 2 and len(r) < 15):
+                    # blobs.append(r)
+                    for p in r:
+                        blobs.append(p)
                 r = []
         self.calCentroid(blobs)
 
@@ -42,22 +60,54 @@ class PersonFollower(object):
                 self.stop = True
 
     def calCentroid(self, blobs):
-        centroids = []
-        for blob in blobs:
-            x = 0
-            y = 0
-            for point in blob:
-                x += point[0]
-                y += point[1]
-            centroids.append(((x/len(blob)), (y/len(blob))))    
-
-        if self.prevCentroids == None:
-            self.prevCentroids = centroids
+        x = 0
+        y = 0
+        for p in blobs:
+            x += p[0]
+            y += p[1]
+        if len(blobs) == 0:
             return
+        self.centroid = (x/len(blobs), y/len(blobs))
+        if self.prevCentroids == None:
+            self.prevCentroids = self.centroid
+            return
+        self.calcHeading()
 
         if self.debug:
-            print centroids
+            # for blob in blobs:
+            #     print len(blob)
+            print "prevCentroid: ", self.prevCentroids
+            print "centroid: ", self.centroid
             print '-------------------------------------------------------------------'
+
+    def calcHeading(self):
+        if(self.calcDistance(self.prevCentroids, self.centroid) > 0.2):
+            x = self.centroid[0]
+            y = self.centroid[1]
+            norm = math.sqrt(x**2 + y**2)
+            if norm==0:
+                self.instruction = (Twist(linear=Vector3(0, 0, 0), angular=Vector3(0, 0, 0)))
+                return
+            xNorm = x/norm
+            yNorm = y/norm
+            
+            # Difference b/w desired and actual heading
+            diffAngle = math.atan2(yNorm, xNorm)
+
+            xVel = self.calcDistance((0,0), (x,y))/2
+            if xVel < 0.3:
+                xVel = 0
+
+            if self.debug:
+                print "diffAngle: ", diffAngle
+                print "xVel: ", xVel
+                print "-----------------"
+            self.instruction = Twist(linear=Vector3(xVel, 0, 0), angular=Vector3(0, 0, diffAngle))
+
+
+    def calcDistance(self, p1, p2):
+        return math.sqrt((p1[0]-p2[0])**2 + ((p1[1]-p2[1])**2))
+
 
 if __name__ == "__main__":
     test = PersonFollower()
