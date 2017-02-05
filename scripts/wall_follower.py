@@ -2,10 +2,9 @@
 
 import rospy, time, math, utils
 from sensor_msgs.msg import LaserScan
-from geometry_msgs.msg import Twist, Vector3, Point
 from neato_node.msg import Bump
-from nav_msgs.msg import Odometry
-
+from geometry_msgs.msg import Twist, Vector3
+from visualization_msgs.msg import Marker
 
 # Utility direction definitions
 DIRECTIONS = {
@@ -49,14 +48,13 @@ class WallFollower(object):
 		rospy.init_node('wall_follower')
 		rospy.Subscriber('/stable_scan', LaserScan, self.processScan)
 		rospy.Subscriber('/bump', Bump, self.emergencyStop)
-		rospy.Subscriber('/odom', Odometry, self.markObst)
 		self.cmd = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
-		self.obst = rospy.Publisher('/obst/nearest', Point, queue_size=10)
+		self.obst = rospy.Publisher('/obst/nearest', Marker, queue_size=10)
 
 		self.minRange = None
 		self.lastMinRange = None
 		self.instruction = DIRECTIONS["FORWARD"]
-		self.nearestObst = None
+		self.marker = None
 		self.stop = False
 		self.debug = debug
 
@@ -66,8 +64,8 @@ class WallFollower(object):
 				self.cmd.publish(DIRECTIONS["STOP"])
 			else:
 				self.cmd.publish(self.instruction)
-				if self.nearestObst:
-					self.obst.publish(self.nearestObst)
+				if self.marker:
+					self.obst.publish(self.marker)
 			r.sleep()
 
 	def emergencyStop(self, b):
@@ -114,18 +112,25 @@ class WallFollower(object):
 		self.velocity = deltaRange / deltaTime
 
 		self.controller(self.minRange, self.velocity)
+		self.markObst(self.minRange["range"], self.minRange["angle"])
 
-	def markObst(self, odom):
-		if not self.minRange:
-			return
+	def markObst(self, dist, angle):
+		m = Marker()
+		m.header.frame_id = "/base_link"
+		m.type = m.SPHERE
+		m.action = m.ADD
+		m.scale.x = 0.2
+		m.scale.y = 0.2
+		m.scale.z = 0.2
+		m.color.a = 1.0
+		m.color.r = 1.0
+		m.color.g = 1.0
+		m.color.b = 0.0
+		m.pose.position.x = dist*math.cos(math.radians(angle))
+		m.pose.position.y = dist*math.sin(math.radians(angle))
+		m.pose.position.z = 0
 
-		robot_x, robot_y, _ = utils.poseToXYTheta(odom.pose.pose)
-
-		rangeAngle = math.radians(self.minRange["angle"])
-		rel_x = self.minRange["range"] * math.cos(rangeAngle)
-		rel_y = self.minRange["range"] * math.sin(rangeAngle)
-
-		self.nearestObst = Point(robot_x + rel_x, robot_y + rel_y, 0)
+		self.marker = m
 
 	def controller(self, wallRange, wallVelocity, targetDistance = 0.80, errorRange=0.10):
 		"""
