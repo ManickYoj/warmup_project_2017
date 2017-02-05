@@ -1,5 +1,8 @@
+#!/usr/bin/env python
+
 import rospy
 from geometry_msgs.msg import Twist, Vector3
+from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan
 from neato_node.msg import Bump
 
@@ -11,10 +14,13 @@ class Automaton(object):
 		initialState=None,
 		debug=False
 	):
+		rospy.init_node(name)
 
-		rospy.Subscriber('/stable_scan', LaserScan, self.onScan)
-    rospy.Subscriber('/bump', Bump, self.onBump)
-    self.cmd = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+		rospy.Subscriber('/scan', LaserScan, self.onScan)
+		rospy.Subscriber('/stable_scan', LaserScan, self.onStableScan)
+		rospy.Subscriber('/bump', Bump, self.onBump)
+		rospy.Subscriber('/odom', Odometry, self.onOdom)
+		self.cmd = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
 
 		self.states = states
 		self.state = initialState
@@ -35,6 +41,9 @@ class Automaton(object):
 	def onScan(self, scan):
 		self.states[self.state].onScan(scan)
 
+	def onStableScan(self, scan):
+		self.states[self.state].onStableScan(scan)
+
 
 class Behavior(object):
 	def __init__(self, name="behavior", debug=False):
@@ -47,6 +56,12 @@ class Behavior(object):
 		pass
 
 	def onScan(self, scan):
+		pass
+
+	def onStableScan(self, scan):
+		pass
+
+	def onOdom(self, odom):
 		pass
 
 	def setLinear(self, linear):
@@ -66,7 +81,7 @@ class Behavior(object):
 		return {
 			"changeState": self.stateName,
 			"command": Twist(
-				linear=Vector3(self.linear, 0, 0)
+				linear=Vector3(self.linear, 0, 0),
 				angular=Vector3(0, 0, self.angular)
 			)
 		}
