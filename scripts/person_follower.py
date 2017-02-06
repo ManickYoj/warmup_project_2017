@@ -1,19 +1,24 @@
 #!/usr/bin/env python
-
+import utils
 import rospy, math
-from sensor_msgs.msg import LaserScan
-from geometry_msgs.msg import Twist, Vector3
+from sensor_msgs.msg import LaserScan, PointCloud
+from nav_msgs.msg import Odometry
+from geometry_msgs.msg import Twist, Vector3, Point
 from neato_node.msg import Bump
 
 class PersonFollower(object):
     def __init__(self, debug = True):
         rospy.init_node('person_follower')
-        rospy.Subscriber('/stable_scan', LaserScan, self.processScan)
+        # rospy.Subscriber('/stable_scan', LaserScan, self.processScan)
+        rospy.Subscriber('/projected_stable_scan', PointCloud, self.processScan)
+        rospy.Subscriber('/odom', Odometry, self.processOdom)
         rospy.Subscriber('/bump', Bump, self.emergencyStop)
         self.publisher = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
-        self.prevCentroids = None
+        self.publisherCentroid = rospy.Publisher('/centroid', PointCloud, queue_size=10)
+        self.pubCentroid = None
         r = rospy.Rate(40)
         self.debug = debug
+        self.robotPos = (0,0,0)
         #inital instruction
         self.instruction = Twist(
             linear=Vector3(0, 0, 0),
@@ -21,6 +26,8 @@ class PersonFollower(object):
           )
         self.stop = False
         while not rospy.is_shutdown():
+            if self.pubCentroid != None:
+                self.publisherCentroid.publish(self.pubCentroid)
             if self.stop:
                 self.publisher.publish(
                   Twist(
@@ -33,25 +40,73 @@ class PersonFollower(object):
             r.sleep()
 
     def processScan(self, scan):
-        frontScan = scan.ranges[-45:-1] + scan.ranges[0:46]
+        pointsList = scan.points
+        indicesList = scan.channels[1].values
+        pointsInRange = []
+        # for i in range(len(pointsList)):
+        #     if indicesList[i] < 46 or indicesList[i] >= 315:
+        #         pointsInRange.append(pointsList[i])
+        # for point in pointsInRange:
+        #     if self.calcDistance((point.x, point.y), self.robotPos) > 1.5:
+        #         pointsInRange.remove(point)
         blobs = []
-        r = []
-        for i in range(0,90):
-            if frontScan[i] > 0.0 and frontScan[i] < 1.5:       
-                angle = i
-                if i < 45:
-                    angle = 360 - i 
-                angle = math.radians(angle)
-                x = math.cos(angle)*frontScan[i]
-                y = math.sin(angle)*frontScan[i]
-                r.append((x,y))
-            elif r != []:
-                if (len(r) > 2 and len(r) < 15):
-                    # blobs.append(r)
-                    for p in r:
-                        blobs.append(p)
-                r = []
-        self.calCentroid(blobs)
+        blob = []
+        for i in range(len(pointsList)):
+            if i == 0:
+                blob.append(pointsList[i])
+            else:
+                if self.calcPointDistance(pointsList[i], pointsList[i-1]) < 0.1:
+                    blob.append(pointsList[i])
+                else:
+                    blobs.append(blob)
+                    blob = [pointsList[i]]
+            if i == len(pointsList) - 1 and len(blob) != 0:
+                    blobs.append(blob)
+        centroidList = [] 
+        for b in blobs:
+            curCentroid = self.calCentroid(b)
+            ang1 = math.atan2((curCentroid[1] - self.robotPos[1]),(curCentroid[0] - self.robotPos[0]))
+            diffAng = utils.diffAngle(ang1, self.robotPos[2])
+            if math.fabs(diffAng) < math.pi/4 and self.calcDistance(self.robotPos, curCentroid) < 1:
+                print diffAng
+                centroidList.append(curCentroid)
+        pc = PointCloud()
+        pc.header = scan.header
+        pc.points = [Point(p[0], p[1], 0) for p in centroidList]
+        self.pubCentroid = pc
+
+
+        # for i in range(len(pointsInRange)):
+        #     if i == 0:
+        #         blob.append(pointsInRange[i])
+        #     else:
+        #         if self.calcPointDistance(pointsInRange[i], pointsInRange[i-1]) < 0.1:
+        #             blob.append(pointsInRange[i])
+        #         else:
+        #             blobs.append(blob)
+        #             blob = [pointsInRange[i]]
+        #     if i == len(pointsInRange) - 1 and len(blob) != 0:
+        #         blobs.append(blob)
+        
+        # frontScan = scan.ranges[-45:-1] + scan.ranges[0:46]
+        # blobs = []
+        # r = []
+        # for i in range(0,90):
+        #     if frontScan[i] > 0.0 and frontScan[i] < 1.5:       
+        #         angle = i
+        #         if i < 45:
+        #             angle = 360 - i 
+        #         angle = math.radians(angle)
+        #         x = math.cos(angle)*frontScan[i]
+        #         y = math.sin(angle)*frontScan[i]
+        #         r.append((x,y))
+        #     elif r != []:
+        #         if (len(r) > 2 and len(r) < 15):
+        #             # blobs.append(r)
+        #             for p in r:
+        #                 blobs.append(p)
+        #         r = []
+        # self.calCentroid(blobs)
 
     def emergencyStop(self, b):
         bumpList = [b.leftFront, b.leftSide, b.rightFront, b.rightSide]
@@ -59,27 +114,17 @@ class PersonFollower(object):
             if reading:
                 self.stop = True
 
-    def calCentroid(self, blobs):
+    def calCentroid(self, blob):
         x = 0
         y = 0
-        for p in blobs:
-            x += p[0]
-            y += p[1]
-        if len(blobs) == 0:
+        for p in blob:
+            x += p.x
+            y += p.y
+        if len(blob) == 0:
             return
-        self.centroid = (x/len(blobs), y/len(blobs))
-        if self.prevCentroids == None:
-            self.prevCentroids = self.centroid
-            return
-        self.calcHeading()
-
-        if self.debug:
-            # for blob in blobs:
-            #     print len(blob)
-            print "prevCentroid: ", self.prevCentroids
-            print "centroid: ", self.centroid
-            print '-------------------------------------------------------------------'
-
+        return (x/len(blob), y/len(blob))
+ 
+     
     def calcHeading(self):
         if(self.calcDistance(self.prevCentroids, self.centroid) > 0.2):
             x = self.centroid[0]
@@ -108,6 +153,12 @@ class PersonFollower(object):
     def calcDistance(self, p1, p2):
         return math.sqrt((p1[0]-p2[0])**2 + ((p1[1]-p2[1])**2))
 
+    def calcPointDistance(self, p1, p2):
+        return math.sqrt((p1.x-p2.x)**2 + ((p1.y-p2.y)**2))
+
+    def processOdom(self, odom):
+        robotOdom = odom.pose.pose
+        self.robotPos = utils.poseToXYTheta(robotOdom)
 
 if __name__ == "__main__":
     test = PersonFollower()
