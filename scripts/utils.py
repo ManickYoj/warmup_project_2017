@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
-from tf.transformations import euler_from_quaternion
+from tf.transformations import euler_from_quaternion, quaternion_from_euler
+from visualization_msgs.msg import Marker
 import math
 
 def poseToXYTheta(pose):
@@ -45,3 +46,38 @@ def diffAngle(a, b):
   if d1 > 0:
     d2 *= -1.0
   return d1 if math.fabs(d1) < math.fabs(d2) else d2
+
+def marker(
+  theta = 0,
+  position = (0, 0, 0),
+  scale = (0.2, 0.2, 0.2),
+  rgba=(1.0, 1.0, 0.0, 1.0),
+  frame="/base_link"
+):
+
+  m = Marker()
+  m.header.frame_id = frame
+  m.type = m.ARROW
+  m.action = m.ADD
+
+  m.scale.x = scale[0]
+  m.scale.y = scale[1]
+  m.scale.z = scale[2]
+
+  m.color.r = rgba[0]
+  m.color.g = rgba[1]
+  m.color.b = rgba[2]
+  m.color.a = rgba[3]
+
+  m.pose.position.x = position[0]
+  m.pose.position.y = position[1]
+  m.pose.position.z = position[2]
+
+  q = quaternion_from_euler(0, 0, theta)
+
+  m.pose.orientation.x = q[0]
+  m.pose.orientation.y = q[1]
+  m.pose.orientation.z = q[2]
+  m.pose.orientation.w = q[3]
+
+  return m
