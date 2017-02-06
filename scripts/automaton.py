@@ -3,7 +3,7 @@
 import rospy
 from geometry_msgs.msg import Twist, Vector3
 from nav_msgs.msg import Odometry
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import LaserScan, PointCloud
 from neato_node.msg import Bump
 
 class Automaton(object):
@@ -18,6 +18,7 @@ class Automaton(object):
 
 		rospy.Subscriber('/scan', LaserScan, self.onScan)
 		rospy.Subscriber('/stable_scan', LaserScan, self.onStableScan)
+		rospy.Subscriber('/projected_stable_scan', PointCloud, self.onProjectedScan)
 		rospy.Subscriber('/bump', Bump, self.onBump)
 		rospy.Subscriber('/odom', Odometry, self.onOdom)
 		self.cmd = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
@@ -59,6 +60,9 @@ class Behavior(object):
 		pass
 
 	def onStableScan(self, scan):
+		pass
+
+	def onProjectedScan(self, scan):
 		pass
 
 	def onOdom(self, odom):
