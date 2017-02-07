@@ -16,7 +16,7 @@ class ObstacleAvoider(object):
         self.dirPub = rospy.Publisher('/direction', Marker, queue_size=10)
         self.publisher = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
 
-        #inital instruction
+        # Inital instruction
         self.instruction = Twist(
             linear=Vector3(0, 0, 0),
             angular=Vector3(0, 0, 0)

@@ -5,6 +5,7 @@ from geometry_msgs.msg import Twist, Vector3
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan, PointCloud
 from neato_node.msg import Bump
+from visualization_msgs.msg import Marker
 
 class Automaton(object):
 	def __init__(
@@ -12,16 +13,27 @@ class Automaton(object):
 		name="automaton",
 		states={},
 		initialState=None,
-		debug=False
+		debug=False,
+		markersTopics=[]
 	):
 		rospy.init_node(name)
 
+		# Setup sensor subscribers
 		rospy.Subscriber('/scan', LaserScan, self.onScan)
 		rospy.Subscriber('/stable_scan', LaserScan, self.onStableScan)
 		rospy.Subscriber('/projected_stable_scan', PointCloud, self.onProjectedScan)
 		rospy.Subscriber('/bump', Bump, self.onBump)
 		rospy.Subscriber('/odom', Odometry, self.onOdom)
+
+		# Setup command publisher
 		self.cmd = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+
+		# Set up dynamic marker publications
+		self.markerPubs = {
+			m:
+			rospy.Publisher(m, Marker, queue_size=10)
+			for m in markersTopics
+		}
 
 		self.states = states
 		self.state = initialState
@@ -30,10 +42,22 @@ class Automaton(object):
 		r = rospy.Rate(20)
 		while not rospy.is_shutdown():
 			instructions = self.states[self.state].update()
-			# Publish instructions
+
+			# Execute movement commands
+			self.cmd.publish(instructions["command"])
+
+			# Change state if necessary
 			if instructions["changeState"] is not None:
 				self.state = instructions["changeState"]
-			self.cmd.publish(instructions["command"])
+
+			# Publish all markers included in the instructions
+			markerData = self.instructions["markers"] or {}
+			for markerName in self.markerPubs.keys():
+				self.markerPubs[markerName].publish(
+					markerData[markerName] if markerName in markerData
+					else utils.clearMarkers()
+				)
+
 			r.sleep()
 
 	def onBump(self, bump):
@@ -87,7 +111,8 @@ class Behavior(object):
 			"command": Twist(
 				linear=Vector3(self.linear, 0, 0),
 				angular=Vector3(0, 0, self.angular)
-			)
+			),
+			"markers": {}
 		}
 
 if __name__ == "__main__":

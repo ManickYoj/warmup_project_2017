@@ -123,10 +123,14 @@ if __name__ == "__main__":
 	# Construct an automaton with the pursuer and
 	# pursued behaviors
 	a.Automaton(
-		"robot_tag",
-		{
+		name = "robot_tag",
+		states = {
 			"pursued": Pursued(),
 			"pursuer": Pursuer()
 		},
-		"pursued"
+		initialState="pursued",
+		markerTopics=[
+			"/plan/direction",
+			"/direction"
+		]
 	)
