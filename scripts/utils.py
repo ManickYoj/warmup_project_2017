@@ -52,12 +52,27 @@ def marker(
   position = (0, 0, 0),
   scale = (0.2, 0.2, 0.2),
   rgba=(1.0, 1.0, 0.0, 1.0),
-  frame="/base_link"
+  frame="/base_link",
+  markerType="ARROW"
 ):
+  markerTypes = [
+    "ARROW",
+    "CUBE",
+    "SPHERE",
+    "CYLINDER",
+    "LINE_STRIP",
+    "LINE_LIST",
+    "CUBE_LIST",
+    "SPHERE_LIST",
+    "POINTS",
+    "TEXT_VIEW_FACING",
+    "MESH_RESOUCE",
+    "TRIANGLE_LIST"
+  ]
 
   m = Marker()
   m.header.frame_id = frame
-  m.type = m.ARROW
+  m.type = markerTypes.index(markerType)
   m.action = m.ADD
 
   m.scale.x = scale[0]
@@ -80,4 +95,9 @@ def marker(
   m.pose.orientation.z = q[2]
   m.pose.orientation.w = q[3]
 
+  return m
+
+def clearMarkers():
+  m = Marker()
+  m.action = m.DELETEALL
   return m
