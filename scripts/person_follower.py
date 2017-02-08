@@ -3,7 +3,7 @@ import utils
 import rospy, math
 from sensor_msgs.msg import LaserScan, PointCloud
 from nav_msgs.msg import Odometry
-from geometry_msgs.msg import Twist, Vector3, Point
+from geometry_msgs.msg import Twist, Vector3, Point, PointStamped
 from neato_node.msg import Bump
 
 class PersonFollower(object):
@@ -14,11 +14,15 @@ class PersonFollower(object):
         rospy.Subscriber('/odom', Odometry, self.processOdom)
         rospy.Subscriber('/bump', Bump, self.emergencyStop)
         self.publisher = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+        self.publisherTar = rospy.Publisher('/target', PointStamped, queue_size=10)
         self.publisherCentroid = rospy.Publisher('/centroid', PointCloud, queue_size=10)
         self.pubCentroid = None
         r = rospy.Rate(40)
         self.debug = debug
         self.robotPos = (0,0,0)
+        self.target = None
+        self.prevCentroids = []
+        self.prevPrevCentroids = []
         #inital instruction
         self.instruction = Twist(
             linear=Vector3(0, 0, 0),
@@ -26,6 +30,8 @@ class PersonFollower(object):
           )
         self.stop = False
         while not rospy.is_shutdown():
+            if self.target != None:
+                self.publisherTar.publish(PointStamped(self.header, Point(self.target[0],self.target[1], 0)))
             if self.pubCentroid != None:
                 self.publisherCentroid.publish(self.pubCentroid)
             if self.stop:
@@ -42,13 +48,6 @@ class PersonFollower(object):
     def processScan(self, scan):
         pointsList = scan.points
         indicesList = scan.channels[1].values
-        pointsInRange = []
-        # for i in range(len(pointsList)):
-        #     if indicesList[i] < 46 or indicesList[i] >= 315:
-        #         pointsInRange.append(pointsList[i])
-        # for point in pointsInRange:
-        #     if self.calcDistance((point.x, point.y), self.robotPos) > 1.5:
-        #         pointsInRange.remove(point)
         blobs = []
         blob = []
         for i in range(len(pointsList)):
@@ -68,45 +67,14 @@ class PersonFollower(object):
             ang1 = math.atan2((curCentroid[1] - self.robotPos[1]),(curCentroid[0] - self.robotPos[0]))
             diffAng = utils.diffAngle(ang1, self.robotPos[2])
             if math.fabs(diffAng) < math.pi/4 and self.calcDistance(self.robotPos, curCentroid) < 1:
-                print diffAng
                 centroidList.append(curCentroid)
+        
         pc = PointCloud()
         pc.header = scan.header
+        self.header = pc.header
         pc.points = [Point(p[0], p[1], 0) for p in centroidList]
         self.pubCentroid = pc
-
-
-        # for i in range(len(pointsInRange)):
-        #     if i == 0:
-        #         blob.append(pointsInRange[i])
-        #     else:
-        #         if self.calcPointDistance(pointsInRange[i], pointsInRange[i-1]) < 0.1:
-        #             blob.append(pointsInRange[i])
-        #         else:
-        #             blobs.append(blob)
-        #             blob = [pointsInRange[i]]
-        #     if i == len(pointsInRange) - 1 and len(blob) != 0:
-        #         blobs.append(blob)
-        
-        # frontScan = scan.ranges[-45:-1] + scan.ranges[0:46]
-        # blobs = []
-        # r = []
-        # for i in range(0,90):
-        #     if frontScan[i] > 0.0 and frontScan[i] < 1.5:       
-        #         angle = i
-        #         if i < 45:
-        #             angle = 360 - i 
-        #         angle = math.radians(angle)
-        #         x = math.cos(angle)*frontScan[i]
-        #         y = math.sin(angle)*frontScan[i]
-        #         r.append((x,y))
-        #     elif r != []:
-        #         if (len(r) > 2 and len(r) < 15):
-        #             # blobs.append(r)
-        #             for p in r:
-        #                 blobs.append(p)
-        #         r = []
-        # self.calCentroid(blobs)
+        self.calcMoving(centroidList)
 
     def emergencyStop(self, b):
         bumpList = [b.leftFront, b.leftSide, b.rightFront, b.rightSide]
@@ -125,30 +93,54 @@ class PersonFollower(object):
         return (x/len(blob), y/len(blob))
  
      
-    def calcHeading(self):
-        if(self.calcDistance(self.prevCentroids, self.centroid) > 0.2):
-            x = self.centroid[0]
-            y = self.centroid[1]
-            norm = math.sqrt(x**2 + y**2)
-            if norm==0:
-                self.instruction = (Twist(linear=Vector3(0, 0, 0), angular=Vector3(0, 0, 0)))
-                return
-            xNorm = x/norm
-            yNorm = y/norm
-            
-            # Difference b/w desired and actual heading
-            diffAngle = math.atan2(yNorm, xNorm)
+    def calcMoving(self, centroidList):
+        # if len(centroidList) == 0 or len(self.prevPrevCentroids) == 0 or len(self.prevCentroids) == 0:
+        if len(centroidList) == 0 :
+            # self.prevPrevCentroids = self.prevCentroids
+            # self.prevCentroids = centroidList
+            self.target = None
+            self.calcHeading(self.target)
+        else: 
+            candidate = None
+            isMoving = True
+            # for c in centroidList:
+            #     for p in self.prevCentroids:
+            #         if self.calcDistance(c,p) < 0.05:
+            #             isMoving = False
+            #     for p in self.prevPrevCentroids:
+            #         if self.calcDistance(c,p) < 0.05:
+            #             isMoving = False
+            #     if isMoving:
+            #         if candidate == None:
+            #             candidate = c
+            #         else:
+            #             if self.calcDistance(self.robotPos, candidate) > self.calcDistance(self.robotPos, c):
+            #                 candidate = c
+            for c in centroidList:
+                if candidate == None or self.calcDistance(c, self.robotPos) < self.calcDistance(candidate, self.robotPos):
+                    candidate = c
+            self.target = candidate
+            self.calcHeading(candidate)
 
-            xVel = self.calcDistance((0,0), (x,y))/2
-            if xVel < 0.3:
-                xVel = 0
-
+    def calcHeading(self, tar):
+        if tar == None:
+            self.instruction = Twist(
+                linear=Vector3(0, 0, 0),
+                angular=Vector3(0, 0, 0)
+              )
+        else:
+            # diffAngle = math.atan2(tar[1] - self.robotPos[1], tar[0] - self.robotPos[0])
+            ang1 = math.atan2((tar[1] - self.robotPos[1]),(tar[0] - self.robotPos[0]))
+            diffAngle = utils.diffAngle(ang1, self.robotPos[2])
+            xVel = self.calcDistance(self.robotPos, (tar[0],tar[1]))
+            targetDistance = 0.3
+            # if xVel < 0.3:
+            #     xVel = 0
             if self.debug:
                 print "diffAngle: ", diffAngle
                 print "xVel: ", xVel
                 print "-----------------"
-            self.instruction = Twist(linear=Vector3(xVel, 0, 0), angular=Vector3(0, 0, diffAngle))
-
+            self.instruction = Twist(linear=Vector3((xVel - targetDistance)*0.5, 0, 0), angular=Vector3(0, 0, diffAngle*0.5))
 
     def calcDistance(self, p1, p2):
         return math.sqrt((p1[0]-p2[0])**2 + ((p1[1]-p2[1])**2))
