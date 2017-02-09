@@ -76,6 +76,7 @@ class Behavior(object):
 		self.stateName = name
 		self.linear = 0
 		self.angular = 0
+		self.markers = {}
 
 	def onBump(self, bump):
 		pass
@@ -92,6 +93,9 @@ class Behavior(object):
 	def onOdom(self, odom):
 		pass
 
+	def updateMarker(self, topic, datum):
+		self.markers[topic] = datum
+
 	def setLinear(self, linear):
 		self.linear = linear
 
@@ -104,6 +108,7 @@ class Behavior(object):
 
 	def changeState(self, stateName):
 		self.stateName = stateName
+		self.markers = {}
 
 	def update(self):
 		return {
@@ -112,7 +117,7 @@ class Behavior(object):
 				linear=Vector3(self.linear, 0, 0),
 				angular=Vector3(0, 0, self.angular)
 			),
-			"markers": {}
+			"markers": self.markers,
 		}
 
 if __name__ == "__main__":
