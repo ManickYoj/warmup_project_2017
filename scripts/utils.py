@@ -99,5 +99,5 @@ def marker(
 
 def clearMarkers():
   m = Marker()
-  m.action = m.DELETEALL
+  m.action = 3
   return m

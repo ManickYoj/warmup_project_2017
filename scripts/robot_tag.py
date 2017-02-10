@@ -1,14 +1,16 @@
 #!/usr/bin/env python
 
-import rospy, math
+import rospy, math, utils
 import automaton as a
+from geometry_msgs.msg import Point
 
 class Pursuer(a.Behavior):
 	def __init__(self, debug=False):
 		super(Pursuer, self).__init__("pursuer", debug)
 
 		self.switchState = False
-    self.prevCentroids = None
+		self.centroids = []
+		self.blobIncludeDist = 0.1
 
 	def onBump(self, b):
 		anyBump = False
@@ -22,31 +24,106 @@ class Pursuer(a.Behavior):
 				anyBump = True
 
 		if anyBump:
-			if not switchState:
-				self.setSpeed(0, 0)
-				self.switchState = True
-			else:
-				self.changeState("pursued")
+			self.setSpeed(-1, 0)
+			self.switchState = True
+		elif self.switchState:
+			self.switchState = False
+			self.changeState("pursued")
 
 	def onProjectedScan(self, scan):
-		pass
-    # centroids = [calCentroid(c) for c in blobs]
+		points = scan.points
+		if not points or self.switchState:
+			return
 
-  def calcCentroid(self, blob):
-  	cent_x, cent_y = (0, 0)
+		blobs = [[points[0]]]
+		prevPoint = points[0]
 
-  	for point in blob:
-  		x, y, _ = point
-  		cent_x += x
-  		cent_y += y
+		# Group points into blobs
+		for point in points:
+			if self.dist(point, prevPoint) < self.blobIncludeDist:
+				blobs[-1].append(point)
+			else:
+				blobs.append([point])
 
-  	norm = len(blob)
-  	return (cent_x / norm, cent_y / norm)
+		# Join the first and last blob if their points are contiguous
+		if self.dist(blobs[0][0], blobs[-1][-1]) < self.blobIncludeDist:
+			blobs[0].extend(blobs[-1])
+			blobs = blobs[:-1]
 
-  def calcHeading(self):
-  	pass
+		self.prevCentroids = self.centroids
+		self.centroids = [self.calcCentroid(c) for c in blobs]
 
-class Persued(a.Behavior):
+	def onOdom(self, odom):
+		pose = odom.pose.pose
+		if self.switchState:
+			return
+
+		# Create a list of candidate points from the centroids
+		# that appear in the robot's front arc
+		candidates = filter(
+			lambda cent: self.isInFrontArc(cent, pose),
+			self.centroids
+		)
+
+		# TODO: Figure out how to make this work
+		# self.updateMarker("/think/candidates",
+		# 	utils.marker(
+		# 		markerType="POINTS",
+		# 	)
+		# )
+
+		# Choose the nearest candidate point as the target
+		minDist = float('Inf')
+		target = None
+		for cand in candidates:
+			d = self.dist(pose.position, cand)
+			if d < minDist:
+				minDist = d
+				target = cand
+
+		if target:
+			self.updateMarker("/plan/target",
+				utils.marker(
+					markerType="SPHERE",
+					position=(target.x, target.y, target.z),
+					frame="/odom",
+				)
+			)
+
+			angle = self.angleFromRobot(target, pose)
+			# TODO: Raise diffAngle turning issue (always left) with Jason and Marissa)
+			self.setSpeed(1, angle * 0.75)
+		else:
+			self.setSpeed(0, 0)
+
+
+	def isInFrontArc(self, point, pose, maxAngle=45, maxDist=2):
+		maxAngle = math.radians(maxAngle)
+		distance = self.dist(pose.position, point)
+		angle = self.angleFromRobot(point, pose)
+
+		return angle < maxAngle and distance < maxDist
+
+	def angleFromRobot(self, point, pose):
+		x, y, robotTheta = utils.poseToXYTheta(pose)
+		pointTheta = math.atan2(point.y-y, point.x-x)
+		return utils.diffAngle(robotTheta, pointTheta)
+
+	def dist(self, point1, point2):
+		return math.hypot(point1.x-point2.x, point1.y-point2.y)
+
+	def calcCentroid(self, blob):
+		cent = Point()
+
+		for point in blob:
+			cent.x += point.x
+			cent.y += point.y
+
+		norm = len(blob)
+		return Point(cent.x / norm, cent.y / norm, 0)
+
+
+class Pursued(a.Behavior):
 	def __init__(self, debug=False):
 		super(Pursued, self).__init__("pursued", debug)
 
@@ -69,15 +146,16 @@ class Persued(a.Behavior):
 				anyBump = True
 
 		if anyBump:
-			if not switchState:
-				self.setSpeed(0, 0)
-				self.switchState = True
-			else:
-				self.changeState("pursuer")
+			self.setSpeed(-1, 0)
+			self.switchState = True
+		elif self.switchState:
+			self.switchState = False
+			self.changeState("pursuer")
 
 	def onStableScan(self, scan):
-		if self.switchState = True:
+		if self.switchState:
 			return
+
 
 		x, y = (25, 0)
 
@@ -106,6 +184,26 @@ class Persued(a.Behavior):
 		# desired direction
 		diffAngle = math.atan2(y, x)
 
+		# Visualize desired direction of robot
+		self.updateMarker("/plan/direction",
+			utils.marker(
+				theta=diffAngle,
+				markerType="ARROW",
+				rgba=(0, 0, 1.0, 1.0),
+				scale=(.9, 0.1, 0.1)
+			)
+		)
+
+		# Visualize actual direction of robot
+		self.updateMarker("/direction",
+			utils.marker(
+				theta=0,
+				markerType="ARROW",
+				rgba=(1.0, 0, 0, 1.0),
+				scale=(0.9, 0.1, 0.1)
+			)
+		)
+
 		# Calculate a linear speed proportional to how
 		# close the robot's direction is to the desired direction
 		xVel = (
@@ -125,12 +223,15 @@ if __name__ == "__main__":
 	a.Automaton(
 		name = "robot_tag",
 		states = {
-			"pursued": Pursued(),
-			"pursuer": Pursuer()
+			"pursued": Pursued(debug=True),
+			"pursuer": Pursuer(debug=True),
 		},
 		initialState="pursued",
 		markerTopics=[
 			"/plan/direction",
-			"/direction"
-		]
+			"/direction",
+			"/think/candidates",
+			"/plan/target",
+		],
+		debug = True
 	)
