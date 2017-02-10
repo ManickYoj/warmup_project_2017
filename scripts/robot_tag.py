@@ -2,6 +2,7 @@
 
 import rospy, math, utils
 import automaton as a
+from geometry_msgs.msg import Point
 
 class Pursuer(a.Behavior):
 	def __init__(self, debug=False):
@@ -23,14 +24,17 @@ class Pursuer(a.Behavior):
 				anyBump = True
 
 		if anyBump:
-			if not switchState:
-				self.setSpeed(0, 0)
-				self.switchState = True
-			else:
-				self.changeState("pursued")
+			self.setSpeed(-1, 0)
+			self.switchState = True
+		elif self.switchState:
+			self.switchState = False
+			self.changeState("pursued")
 
 	def onProjectedScan(self, scan):
 		points = scan.points
+		if not points or self.switchState:
+			return
+
 		blobs = [[points[0]]]
 		prevPoint = points[0]
 
@@ -47,15 +51,17 @@ class Pursuer(a.Behavior):
 			blobs = blobs[:-1]
 
 		self.prevCentroids = self.centroids
-		self.centroids = [calcCentroid(c) for c in blobs]
+		self.centroids = [self.calcCentroid(c) for c in blobs]
 
 	def onOdom(self, odom):
 		pose = odom.pose.pose
+		if self.switchState:
+			return
 
 		# Create a list of candidate points from the centroids
 		# that appear in the robot's front arc
 		candidates = filter(
-			lambda cent: isInFrontArc(cent, pose),
+			lambda cent: self.isInFrontArc(cent, pose),
 			self.centroids
 		)
 
@@ -67,21 +73,24 @@ class Pursuer(a.Behavior):
 		# )
 
 		# Choose the nearest candidate point as the target
-		target = min([
-			self.dist(pose.position, cand)
-			for candidate in candidates
-		])
-
-		self.updateMarker("/plan/target",
-			utils.marker(
-				markerType="SPHERE",
-				position=(target.x, target.y, target.z),
-				frame="/odom",
-			)
-		)
+		minDist = float('Inf')
+		target = None
+		for cand in candidates:
+			d = self.dist(pose.position, cand)
+			if d < minDist:
+				minDist = d
+				target = cand
 
 		if target:
-			angle = self.angleFromRobot(pose, target)
+			self.updateMarker("/plan/target",
+				utils.marker(
+					markerType="SPHERE",
+					position=(target.x, target.y, target.z),
+					frame="/odom",
+				)
+			)
+
+			angle = self.angleFromRobot(target, pose)
 			# TODO: Raise diffAngle turning issue (always left) with Jason and Marissa)
 			self.setSpeed(1, angle * 0.75)
 		else:
@@ -91,7 +100,7 @@ class Pursuer(a.Behavior):
 	def isInFrontArc(self, point, pose, maxAngle=45, maxDist=2):
 		maxAngle = math.radians(maxAngle)
 		distance = self.dist(pose.position, point)
-		angle = angleFromRobot(point, pose)
+		angle = self.angleFromRobot(point, pose)
 
 		return angle < maxAngle and distance < maxDist
 
@@ -104,18 +113,17 @@ class Pursuer(a.Behavior):
 		return math.hypot(point1.x-point2.x, point1.y-point2.y)
 
 	def calcCentroid(self, blob):
-		cent_x, cent_y = (0, 0)
+		cent = Point()
 
 		for point in blob:
-			x, y, _ = point
-			cent_x += x
-			cent_y += y
+			cent.x += point.x
+			cent.y += point.y
 
 		norm = len(blob)
-		return (cent_x / norm, cent_y / norm)
+		return Point(cent.x / norm, cent.y / norm, 0)
 
 
-class Persued(a.Behavior):
+class Pursued(a.Behavior):
 	def __init__(self, debug=False):
 		super(Pursued, self).__init__("pursued", debug)
 
@@ -138,15 +146,16 @@ class Persued(a.Behavior):
 				anyBump = True
 
 		if anyBump:
-			if not switchState:
-				self.setSpeed(0, 0)
-				self.switchState = True
-			else:
-				self.changeState("pursuer")
+			self.setSpeed(-1, 0)
+			self.switchState = True
+		elif self.switchState:
+			self.switchState = False
+			self.changeState("pursuer")
 
 	def onStableScan(self, scan):
-		if self.switchState = True:
+		if self.switchState:
 			return
+
 
 		x, y = (25, 0)
 
@@ -179,7 +188,7 @@ class Persued(a.Behavior):
 		self.updateMarker("/plan/direction",
 			utils.marker(
 				theta=diffAngle,
-				markerType="ARROW"
+				markerType="ARROW",
 				rgba=(0, 0, 1.0, 1.0),
 				scale=(.9, 0.1, 0.1)
 			)
@@ -214,8 +223,8 @@ if __name__ == "__main__":
 	a.Automaton(
 		name = "robot_tag",
 		states = {
-			"pursued": Pursued(),
-			"pursuer": Pursuer(),
+			"pursued": Pursued(debug=True),
+			"pursuer": Pursuer(debug=True),
 		},
 		initialState="pursued",
 		markerTopics=[
@@ -223,5 +232,6 @@ if __name__ == "__main__":
 			"/direction",
 			"/think/candidates",
 			"/plan/target",
-		]
+		],
+		debug = True
 	)

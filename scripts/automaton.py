@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import rospy
+import rospy, utils
 from geometry_msgs.msg import Twist, Vector3
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan, PointCloud
@@ -14,7 +14,7 @@ class Automaton(object):
 		states={},
 		initialState=None,
 		debug=False,
-		markersTopics=[]
+		markerTopics=[]
 	):
 		rospy.init_node(name)
 
@@ -32,7 +32,7 @@ class Automaton(object):
 		self.markerPubs = {
 			m:
 			rospy.Publisher(m, Marker, queue_size=10)
-			for m in markersTopics
+			for m in markerTopics
 		}
 
 		self.states = states
@@ -51,7 +51,7 @@ class Automaton(object):
 				self.state = instructions["changeState"]
 
 			# Publish all markers included in the instructions
-			markerData = self.instructions["markers"] or {}
+			markerData = instructions["markers"] or {}
 			for markerName in self.markerPubs.keys():
 				self.markerPubs[markerName].publish(
 					markerData[markerName] if markerName in markerData
@@ -69,6 +69,15 @@ class Automaton(object):
 	def onStableScan(self, scan):
 		self.states[self.state].onStableScan(scan)
 
+	def onProjectedScan(self, scan):
+		self.states[self.state].onProjectedScan(scan)
+
+	def onOdom(self, odom):
+		self.states[self.state].onOdom(odom)
+
+	def debugLog(self, msg):
+		if self.debug:
+			print msg
 
 class Behavior(object):
 	def __init__(self, name="behavior", debug=False):
@@ -109,6 +118,7 @@ class Behavior(object):
 	def changeState(self, stateName):
 		self.stateName = stateName
 		self.markers = {}
+		self.debugLog("Changing state to {}".format(stateName))
 
 	def update(self):
 		return {
@@ -119,6 +129,10 @@ class Behavior(object):
 			),
 			"markers": self.markers,
 		}
+
+	def debugLog(self, msg):
+		if self.debug:
+			print msg
 
 if __name__ == "__main__":
 	pass
