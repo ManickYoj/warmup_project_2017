@@ -9,7 +9,6 @@ from neato_node.msg import Bump
 class PersonFollower(object):
     def __init__(self, debug = True):
         rospy.init_node('person_follower')
-        # rospy.Subscriber('/stable_scan', LaserScan, self.processScan)
         rospy.Subscriber('/projected_stable_scan', PointCloud, self.processScan)
         rospy.Subscriber('/odom', Odometry, self.processOdom)
         rospy.Subscriber('/bump', Bump, self.emergencyStop)
@@ -94,28 +93,12 @@ class PersonFollower(object):
  
      
     def calcMoving(self, centroidList):
-        # if len(centroidList) == 0 or len(self.prevPrevCentroids) == 0 or len(self.prevCentroids) == 0:
         if len(centroidList) == 0 :
-            # self.prevPrevCentroids = self.prevCentroids
-            # self.prevCentroids = centroidList
             self.target = None
             self.calcHeading(self.target)
         else: 
             candidate = None
             isMoving = True
-            # for c in centroidList:
-            #     for p in self.prevCentroids:
-            #         if self.calcDistance(c,p) < 0.05:
-            #             isMoving = False
-            #     for p in self.prevPrevCentroids:
-            #         if self.calcDistance(c,p) < 0.05:
-            #             isMoving = False
-            #     if isMoving:
-            #         if candidate == None:
-            #             candidate = c
-            #         else:
-            #             if self.calcDistance(self.robotPos, candidate) > self.calcDistance(self.robotPos, c):
-            #                 candidate = c
             for c in centroidList:
                 if candidate == None or self.calcDistance(c, self.robotPos) < self.calcDistance(candidate, self.robotPos):
                     candidate = c
@@ -129,13 +112,10 @@ class PersonFollower(object):
                 angular=Vector3(0, 0, 0)
               )
         else:
-            # diffAngle = math.atan2(tar[1] - self.robotPos[1], tar[0] - self.robotPos[0])
             ang1 = math.atan2((tar[1] - self.robotPos[1]),(tar[0] - self.robotPos[0]))
             diffAngle = utils.diffAngle(ang1, self.robotPos[2])
             xVel = self.calcDistance(self.robotPos, (tar[0],tar[1]))
             targetDistance = 0.3
-            # if xVel < 0.3:
-            #     xVel = 0
             if self.debug:
                 print "diffAngle: ", diffAngle
                 print "xVel: ", xVel
