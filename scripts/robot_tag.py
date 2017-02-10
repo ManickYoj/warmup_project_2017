@@ -4,11 +4,11 @@ import rospy, math, utils
 import automaton as a
 from geometry_msgs.msg import Point
 
+
 class Pursuer(a.Behavior):
 	def __init__(self, debug=False):
 		super(Pursuer, self).__init__("pursuer", debug)
 
-		self.switchState = False
 		self.centroids = []
 		self.blobIncludeDist = 0.1
 
@@ -21,18 +21,11 @@ class Pursuer(a.Behavior):
 			b.rightSide
 		]:
 			if reading:
-				anyBump = True
-
-		if anyBump:
-			self.setSpeed(-1, 0)
-			self.switchState = True
-		elif self.switchState:
-			self.switchState = False
-			self.changeState("pursued")
+				self.changeState("reverse", {"nextBehavior": "pursued"})
 
 	def onProjectedScan(self, scan):
 		points = scan.points
-		if not points or self.switchState:
+		if not points:
 			return
 
 		blobs = [[points[0]]]
@@ -40,13 +33,13 @@ class Pursuer(a.Behavior):
 
 		# Group points into blobs
 		for point in points:
-			if self.dist(point, prevPoint) < self.blobIncludeDist:
+			if utils.dist(point, prevPoint) < self.blobIncludeDist:
 				blobs[-1].append(point)
 			else:
 				blobs.append([point])
 
 		# Join the first and last blob if their points are contiguous
-		if self.dist(blobs[0][0], blobs[-1][-1]) < self.blobIncludeDist:
+		if utils.dist(blobs[0][0], blobs[-1][-1]) < self.blobIncludeDist:
 			blobs[0].extend(blobs[-1])
 			blobs = blobs[:-1]
 
@@ -55,8 +48,6 @@ class Pursuer(a.Behavior):
 
 	def onOdom(self, odom):
 		pose = odom.pose.pose
-		if self.switchState:
-			return
 
 		# Create a list of candidate points from the centroids
 		# that appear in the robot's front arc
@@ -76,7 +67,7 @@ class Pursuer(a.Behavior):
 		minDist = float('Inf')
 		target = None
 		for cand in candidates:
-			d = self.dist(pose.position, cand)
+			d = utils.dist(pose.position, cand)
 			if d < minDist:
 				minDist = d
 				target = cand
@@ -91,15 +82,14 @@ class Pursuer(a.Behavior):
 			)
 
 			angle = self.angleFromRobot(target, pose)
-			# TODO: Raise diffAngle turning issue (always left) with Jason and Marissa)
-			self.setSpeed(1, angle * 0.75)
+			self.setSpeed(0.5, -angle)
 		else:
 			self.setSpeed(0, 0)
 
 
-	def isInFrontArc(self, point, pose, maxAngle=45, maxDist=2):
+	def isInFrontArc(self, point, pose, maxAngle=45, maxDist=1):
 		maxAngle = math.radians(maxAngle)
-		distance = self.dist(pose.position, point)
+		distance = utils.dist(pose.position, point)
 		angle = self.angleFromRobot(point, pose)
 
 		return angle < maxAngle and distance < maxDist
@@ -108,9 +98,6 @@ class Pursuer(a.Behavior):
 		x, y, robotTheta = utils.poseToXYTheta(pose)
 		pointTheta = math.atan2(point.y-y, point.x-x)
 		return utils.diffAngle(robotTheta, pointTheta)
-
-	def dist(self, point1, point2):
-		return math.hypot(point1.x-point2.x, point1.y-point2.y)
 
 	def calcCentroid(self, blob):
 		cent = Point()
@@ -128,7 +115,6 @@ class Pursued(a.Behavior):
 		super(Pursued, self).__init__("pursued", debug)
 
 		# Init behavior variables
-		self.switchState = False
 		self.gain = rospy.get_param("~gain", 0.5)
 		self.cutoffAngle = math.radians(
 			rospy.get_param("~cutoff_angle", 180)
@@ -143,29 +129,18 @@ class Pursued(a.Behavior):
 			b.rightSide
 		]:
 			if reading:
-				anyBump = True
-
-		if anyBump:
-			self.setSpeed(-1, 0)
-			self.switchState = True
-		elif self.switchState:
-			self.switchState = False
-			self.changeState("pursuer")
+				self.changeState("reverse", {"nextBehavior": "pursuer"})
 
 	def onStableScan(self, scan):
-		if self.switchState:
-			return
-
-
 		x, y = (25, 0)
 
 		# Sum repulsive forces from objects into a
 		# desired direction vector (away from objects)
-		for angle, dist in enumerate(scan.ranges):
-			if dist==0:
+		for angle, distance in enumerate(scan.ranges):
+			if distance==0:
 				continue
 
-			mag = -1/(dist-0.2)**4
+			mag = -1/(distance-0.2)**4
 			angle = math.radians(angle)
 
 			x += math.cos(angle)*mag
@@ -216,6 +191,29 @@ class Pursued(a.Behavior):
 
 		self.setSpeed(xVel, diffAngle*self.gain)
 
+class Reverse(a.Behavior):
+	def __init__(self, debug=False):
+		super(Reverse, self).__init__("reverse", debug)
+		self.nextBehavior = "pursued"
+		self.startPoint = None
+
+	def resume(self, args):
+		if "nextBehavior" in args:
+			self.nextBehavior = args["nextBehavior"]
+
+		self.startPoint = None
+		self.setSpeed(-0.5, 0)
+
+
+	def onOdom(self, odom):
+		pos = odom.pose.pose.position
+
+		if self.startPoint is None:
+			self.startPoint = pos
+		elif utils.dist(self.startPoint, pos) > 0.25:
+			self.changeState(self.nextBehavior)
+
+
 
 if __name__ == "__main__":
 	# Construct an automaton with the pursuer and
@@ -225,6 +223,7 @@ if __name__ == "__main__":
 		states = {
 			"pursued": Pursued(debug=True),
 			"pursuer": Pursuer(debug=True),
+			"reverse": Reverse(debug=True),
 		},
 		initialState="pursued",
 		markerTopics=[

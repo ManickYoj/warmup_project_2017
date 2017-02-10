@@ -40,6 +40,7 @@ class Automaton(object):
 		self.debug = debug
 
 		r = rospy.Rate(20)
+		rospy.on_shutdown(lambda: self.cmd.publish(Twist()))
 		while not rospy.is_shutdown():
 			instructions = self.states[self.state].update()
 
@@ -49,6 +50,8 @@ class Automaton(object):
 			# Change state if necessary
 			if instructions["changeState"] is not None:
 				self.state = instructions["changeState"]
+				self.states[self.state]._resume(instructions["changeArgs"])
+				continue
 
 			# Publish all markers included in the instructions
 			markerData = instructions["markers"] or {}
@@ -86,6 +89,16 @@ class Behavior(object):
 		self.linear = 0
 		self.angular = 0
 		self.markers = {}
+		self.nextState = None
+		self.changeArgs = {}
+
+	def _resume(self, args):
+		self.nextState = None
+		self.changeArgs = {}
+		self.resume(args)
+
+	def resume(self, args):
+		pass
 
 	def onBump(self, bump):
 		pass
@@ -115,14 +128,16 @@ class Behavior(object):
 		self.linear = linear
 		self.angular = angular
 
-	def changeState(self, stateName):
-		self.stateName = stateName
+	def changeState(self, newState, args={}):
+		self.nextState = newState
+		self.changeArgs = args
 		self.markers = {}
-		self.debugLog("Changing state to {}".format(stateName))
+		self.debugLog("Changing state to {}".format(newState))
 
 	def update(self):
 		return {
-			"changeState": self.stateName,
+			"changeState": self.nextState,
+			"changeArgs": self.changeArgs,
 			"command": Twist(
 				linear=Vector3(self.linear, 0, 0),
 				angular=Vector3(0, 0, self.angular)

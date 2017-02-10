@@ -101,3 +101,6 @@ def clearMarkers():
   m = Marker()
   m.action = 3
   return m
+
+def dist(point1, point2):
+  return math.hypot(point1.x-point2.x, point1.y-point2.y)
